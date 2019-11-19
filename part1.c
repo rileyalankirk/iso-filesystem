@@ -8,7 +8,7 @@
  * The output can be checked against the provided samples or the `isoinfo -d` command (you would
  * have to install that and be aware that it prints out way more information).
  * 
- * You will need to following functions complete this part:
+ * You will need the following functions to complete this part:
  *      open() and close()  https://linux.die.net/man/2/open and https://linux.die.net/man/2/close
  *      fstat()             https://linux.die.net/man/2/fstat
  *      mmap() and munmap() https://linux.die.net/man/2/mmap
@@ -52,17 +52,41 @@ ISO* load_iso(const char* filename)
 {
     // TODO: Allocate the memory for our filesystem, make sure that pvd is set to NULL
     ISO* iso;
+    if (!(iso = (ISO*) malloc(sizeof(ISO)))) { return NULL; }
+    iso->pvd = NULL;
 
     // Open the ISO file
-    // TODO: setup the fd, size, and data fields in iso
-    // TODO: make sure to check every return value and cleanup everything if there is a problem
+    // Setup the fd, size, and data fields in iso
+    if ((iso->fd = open(filename, O_RDONLY)) == -1) { free(iso); return NULL; }
+    struct stat stats;
+    if (fstat(iso->fd, &stats) == -1) { close(iso->fd); free(iso); return NULL; }
+    iso->size = stats.st_size;
+    if ((iso->raw = mmap(NULL, iso->size, PROT_READ, MAP_PRIVATE, iso->fd, 0)) == (void *) -1) { close(iso->fd); free(iso); return NULL; }
 
     // Setup fields based on ISO data
+    int offset = 0x8000;
+    bool terminated = false;
+    while(offset < iso->size) {
+        VolumeDescriptor* curr_descr = (VolumeDescriptor*) &iso->raw[offset]; // The current volume descriptor
+        if (curr_descr->type_code == VD_TERMINATOR) { terminated = true; break; }
+        // Checks the version, id, type code, and if a primary volume descriptor has already been found
+        if (curr_descr->version == 1 && memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
+            iso->pvd = (PrimaryVolumeDescriptor*) &iso->raw[offset];
+        }
+        offset += 0x800;
+    }
     // TODO: Check the ISO for problems and cleanup everything if there is a problem
     // TODO: Also find the Primary Volume Descriptor and set the pvd fields in the iso variable
 
     // TODO: Check if a Primary Volume Descriptor was not found or we got to the end of the file
     // before the Terminator was found
+    if (!iso->pvd || !terminated) {
+        errno = EINVAL;
+        close(iso->fd);
+        munmap(iso->raw, iso->size);
+        free(iso);
+        return NULL;
+    }
 
     // Return the setup iso variable
     return iso;
@@ -74,7 +98,9 @@ ISO* load_iso(const char* filename)
  */
 void free_iso(ISO* iso)
 {
-    // TODO
+    close(iso->fd);
+    if (iso->raw) { munmap(iso->raw, iso->size); }
+    free(iso);
 }
 
 int main(int argc, char *argv[])
