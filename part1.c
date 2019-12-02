@@ -50,9 +50,9 @@
  */
 ISO* load_iso(const char* filename)
 {
-    // TODO: Allocate the memory for our filesystem, make sure that pvd is set to NULL
-    ISO* iso;
-    if (!(iso = (ISO*) malloc(sizeof(ISO)))) { return NULL; }
+    // Allocate the memory for our filesystem, make sure that pvd is set to NULL
+    ISO* iso = (ISO*) malloc(sizeof(ISO));
+    if (!iso) { return NULL; }
     iso->pvd = NULL;
 
     // Open the ISO file
@@ -72,13 +72,14 @@ ISO* load_iso(const char* filename)
         // Checks the version, id, type code, and if a primary volume descriptor has already been found
         if (curr_descr->version == 1 && memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
             iso->pvd = (PrimaryVolumeDescriptor*) &iso->raw[offset];
+            break;
         }
         offset += 0x800;
     }
     // TODO: Check the ISO for problems and cleanup everything if there is a problem
     // TODO: Also find the Primary Volume Descriptor and set the pvd fields in the iso variable
 
-    // TODO: Check if a Primary Volume Descriptor was not found or we got to the end of the file
+    // Check if a Primary Volume Descriptor was not found or we got to the end of the file
     // before the Terminator was found
     if (!iso->pvd || !terminated) {
         errno = EINVAL;
