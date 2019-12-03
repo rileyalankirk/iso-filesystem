@@ -72,6 +72,7 @@ ISO* load_iso(const char* filename)
         // Checks the version, id, type code, and if a primary volume descriptor has already been found
         if (curr_descr->version != 1 )
         {
+            errno = EINVAL;
             close(iso->fd);
             munmap(iso->raw, iso->size);
             free(iso);
