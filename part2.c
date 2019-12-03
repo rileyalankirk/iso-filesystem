@@ -138,6 +138,7 @@ const Record* get_record(const ISO* iso, const char* path)
         uint32_t start_pos = curr_dir->extent_location*iso->pvd->logical_block_size; // Start of directory
         if (start_pos + curr_dir->extent_length > iso->size) {
             errno = EINVAL;
+            free_path_names(path_parts);
             return NULL;
         }
 
@@ -168,19 +169,21 @@ const Record* get_record(const ISO* iso, const char* path)
 
         // Check if we failed to find a match - file/directory does not exist
         if (!found_path_part) {
-            if (i == 0) { errno = ENOENT; } // This is the case where no part of the path was found
+            errno = ENOENT;
+            free_path_names(path_parts);
             return NULL;
         }
 
         // Check if a regular file matched something supposed to be a directory
         if ((i != path_parts->count - 1 || path_parts->trailing_slash) && !(curr_record->file_flags & FILE_DIRECTORY)) {
             errno = ENOTDIR;
+            free_path_names(path_parts);
             return NULL;
         }
         
         curr_dir = curr_record;
     }
-    if ((curr_record->file_flags & FILE_DIRECTORY) && !path_parts->trailing_slash) { return NULL; }
+    if ((curr_record->file_flags & FILE_DIRECTORY) && !path_parts->trailing_slash) { free_path_names(path_parts); return NULL; }
 
     // Cleanup and return the found record
     free_path_names(path_parts);
