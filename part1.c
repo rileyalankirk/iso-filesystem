@@ -70,7 +70,13 @@ ISO* load_iso(const char* filename)
         VolumeDescriptor* curr_descr = (VolumeDescriptor*) &iso->raw[offset]; // The current volume descriptor
         if (curr_descr->type_code == VD_TERMINATOR) { terminated = true; break; }
         // Checks the version, id, type code, and if a primary volume descriptor has already been found
-        if (curr_descr->version == 1 && memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
+        if (curr_descr->version != 1 )
+        {
+            close(iso->fd);
+            munmap(iso->raw, iso->size);
+            free(iso);
+            return NULL;
+        } else if (memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
             iso->pvd = (PrimaryVolumeDescriptor*) &iso->raw[offset];
         }
         offset += 0x800;
