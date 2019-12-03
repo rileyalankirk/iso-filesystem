@@ -70,7 +70,14 @@ ISO* load_iso(const char* filename)
         VolumeDescriptor* curr_descr = (VolumeDescriptor*) &iso->raw[offset]; // The current volume descriptor
         if (curr_descr->type_code == VD_TERMINATOR) { terminated = true; break; }
         // Checks the version, id, type code, and if a primary volume descriptor has already been found
-        if (curr_descr->version == 1 && memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
+        if (curr_descr->version != 1 )
+        {
+            errno = EINVAL;
+            close(iso->fd);
+            munmap(iso->raw, iso->size);
+            free(iso);
+            return NULL;
+        } else if (memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
             iso->pvd = (PrimaryVolumeDescriptor*) &iso->raw[offset];
         }
         offset += 0x800;
@@ -140,6 +147,12 @@ const Record* get_record(const ISO* iso, const char* path)
         uint32_t offset = 0;
         bool found_path_part = false;
         while (true) {
+            // Get the record's filename and check for a match
+            char filename[256];
+            get_record_filename(iso, curr_record, filename);
+            if ((found_path_part = !strcmp(filename, path_parts->names[i]))) { break; }
+
+
             // Update offset; jump to next block if necessary
             if (curr_record->length == 0) {
                 offset = (((start_pos + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - start_pos;
@@ -148,12 +161,6 @@ const Record* get_record(const ISO* iso, const char* path)
 
             // Make sure we are not outside of the current directory
             if (offset >= curr_dir->extent_length) { break; }
-
-            // Get the record's filename and check for a match
-            char filename[256];
-            get_record_filename(iso, curr_record, filename);
-            printf("%s\n",filename);
-            if ((found_path_part = !strcmp(filename, path_parts->names[i]))) { break; }
 
             // Advance to the next record (make sure to account for end-of-sector issues)
             curr_record = (Record*) &iso->raw[offset + start_pos];
@@ -171,7 +178,7 @@ const Record* get_record(const ISO* iso, const char* path)
             return NULL;
         }
         
-        curr_dir = (Record*) &iso->raw[curr_dir->extent_length + start_pos];
+        curr_dir = curr_record;
     }
     if ((curr_record->file_flags & FILE_DIRECTORY) && !path_parts->trailing_slash) { return NULL; }
 
