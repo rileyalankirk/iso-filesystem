@@ -183,7 +183,6 @@ const Record* get_record(const ISO* iso, const char* path)
         
         curr_dir = curr_record;
     }
-    if ((curr_record->file_flags & FILE_DIRECTORY) && !path_parts->trailing_slash) { free_path_names(path_parts); return NULL; }
 
     // Cleanup and return the found record
     free_path_names(path_parts);
