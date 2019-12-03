@@ -50,9 +50,9 @@
  */
 ISO* load_iso(const char* filename)
 {
-    // TODO: Allocate the memory for our filesystem, make sure that pvd is set to NULL
-    ISO* iso;
-    if (!(iso = (ISO*) malloc(sizeof(ISO)))) { return NULL; }
+    // Allocate the memory for our filesystem, make sure that pvd is set to NULL
+    ISO* iso = (ISO*) malloc(sizeof(ISO));
+    if (!iso) { return NULL; }
     iso->pvd = NULL;
 
     // Open the ISO file
@@ -78,7 +78,7 @@ ISO* load_iso(const char* filename)
     // TODO: Check the ISO for problems and cleanup everything if there is a problem
     // TODO: Also find the Primary Volume Descriptor and set the pvd fields in the iso variable
 
-    // TODO: Check if a Primary Volume Descriptor was not found or we got to the end of the file
+    // Check if a Primary Volume Descriptor was not found or we got to the end of the file
     // before the Terminator was found
     if (!iso->pvd || !terminated) {
         errno = EINVAL;
@@ -120,14 +120,13 @@ const Record* get_record(const ISO* iso, const char* path)
     // Get the root directory record, if path is just "/" then return it
     Record* curr_record;
     Record* curr_dir = &iso->pvd->root_record; // The current directory; beginning from the root
-    if (strcmp(path, "/")) { return curr_dir; }
+    if (!strcmp(path, "/")) { return curr_dir; }
     
     // Get the path name parts from the given path
     path_names* path_parts = get_path_names(path);
     if (!path_parts) { return NULL; }
-
     // Go through each name in the set of path names
-    for (int i = 0; i < path_parts->count; i++) {        
+    for (int i = 0; i < path_parts->count; i++) {
         // Check that the end of the extent is within the ISO file raw data
         uint32_t start_pos = curr_dir->extent_location*iso->pvd->logical_block_size; // Start of directory
         if (start_pos + curr_dir->extent_length > iso->size) {
@@ -153,7 +152,8 @@ const Record* get_record(const ISO* iso, const char* path)
             // Get the record's filename and check for a match
             char filename[256];
             get_record_filename(iso, curr_record, filename);
-            if (found_path_part = strcmp(filename, path_parts->names[i])) { break; }
+            printf("%s\n",filename);
+            if ((found_path_part = !strcmp(filename, path_parts->names[i]))) { break; }
 
             // Advance to the next record (make sure to account for end-of-sector issues)
             curr_record = (Record*) &iso->raw[offset + start_pos];
@@ -170,9 +170,10 @@ const Record* get_record(const ISO* iso, const char* path)
             errno = ENOTDIR;
             return NULL;
         }
-
+        
         curr_dir = (Record*) &iso->raw[curr_dir->extent_length + start_pos];
     }
+    if ((curr_record->file_flags & FILE_DIRECTORY) && !path_parts->trailing_slash) { return NULL; }
 
     // Cleanup and return the found record
     free_path_names(path_parts);
