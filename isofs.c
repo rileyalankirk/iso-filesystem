@@ -596,17 +596,17 @@ struct fuse_operations isofs_oper = {
     // Basic Information Operations
     .statfs = isofs_statfs,
     .getattr = isofs_getattr,
-    //.access = isofs_access,
+    .access = isofs_access,
 
     // Directories
-    //.opendir = isofs_opendir,
-    //.readdir = isofs_readdir,
-    //.releasedir = isofs_releasedir,
+    .opendir = isofs_opendir,
+    .readdir = isofs_readdir,
+    .releasedir = isofs_releasedir,
 
     // Files
-    //.open = isofs_open,
-    //.read = isofs_read,
-    //.release = isofs_release,
+    .open = isofs_open,
+    .read = isofs_read,
+    .release = isofs_release,
 
     // There are lots of other functions we aren't implementing since we are read-only...
     //    create, write, flush, fsync, ftruncate, truncate, chmod, utime, rename, mkdir, unlink, rmdir
