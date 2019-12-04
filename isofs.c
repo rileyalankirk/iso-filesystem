@@ -280,11 +280,15 @@ void isofs_destroy(void *userdata)
 int isofs_statfs(const char *path, struct statvfs *statv)
 {
     LOG("statfs(path=\"%s\", statvfs=%p)\n", path, statv);
+    const ISO* iso = GET_ISO();
 
     // Most of these values are just set to 0 or filler values. The only ones with actual values are
     // the logical size of a block and fragment (use the same value for both), the total size of the
     // file system, and the number of files.
-    // TODO: fill in the ones that make sense (as listed above)
+    statv->f_bsize = iso->pvd->logical_block_size;
+    statv->f_frsize = iso->pvd->logical_block_size;
+    statv->f_blocks = iso->pvd->volume_space_size;
+    statv->f_files = get_number_of_files(iso);
 
     // The rest are just filled in with whatever
     statv->f_bfree = 0;
@@ -306,10 +310,15 @@ int isofs_getattr(const char *path, struct stat *statbuf)
 {
     LOG("getattr(path=\"%s\", statbuf=%p)\n", path, statbuf);
 
-    // TODO: Find the ISO record (which can be either a file or directory)
+    // Find the ISO record (which can be either a file or directory)
     // In the case of an error, return -errno
+    const ISO* iso = GET_ISO();
+    const Record* record = get_record(iso, path);
+    if (!record) { return -errno; }
 
-    // TODO: Get any extra available Rock Ridge data (see the main() in part 2 for an example)
+    // Get any extra available Rock Ridge data (see the main() in part 2 for an example)
+    RRExtraData rr;
+    read_rock_ridge_data(iso, record, &rr);
     
     // TODO: Fill in the filesystem stat object using the record and the Rock Ridge data
     // Prefer Rock Ridge data over record data if available
@@ -317,6 +326,30 @@ int isofs_getattr(const char *path, struct stat *statbuf)
     //  directories should be readable and executable by all and files should be readable by all
     //  uid and gid should be the current user and group (use getuid() and getgid())
     //  nlink should be a fixed, reasonable, value
+    if (rr.flags & RR_HAS_STAT) {
+        statbuf->st_mode = rr.mode;
+        statbuf->st_nlink = rr.nlinks;
+        statbuf->st_uid = rr.uid;
+        statbuf->st_gid = rr.gid;
+    } else {
+        if (record->file_flags & FILE_DIRECTORY) {
+            statbuf->st_mode |= S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
+        } else { statbuf->st_mode |= S_IRUSR | S_IRGRP | S_IROTH; }
+        statbuf->st_nlink = 1;
+        statbuf->st_uid = getuid();
+        statbuf->st_gid = getgid();
+    }
+    if (rr.flags & RR_HAS_INO) { statbuf->st_ino = rr.ino; }
+    else { statbuf->st_ino = 1; }
+    if (rr.flags & RR_HAS_MODIFICATION) { statbuf->st_mtime = rr.modification; }
+    else { statbuf->st_mtime = convert_datetime(&record->datetime); }
+    if (rr.flags & RR_HAS_ACCESS) { statbuf->st_atime = rr.access; }
+    else { statbuf->st_mtime = convert_datetime(&record->datetime); }
+    if (rr.flags & RR_HAS_CREATION) { statbuf->st_ctime = rr.creation; }
+    else { statbuf->st_mtime = convert_datetime(&record->datetime); }
+ 
+    statbuf->st_size = record->extent_length;
+    statbuf->st_blocks = (statbuf->st_size + 511) / 512;
 
     // Always set rdev to 0 and don't touch dev and blksize
     statbuf->st_rdev = 0;
@@ -335,16 +368,18 @@ int isofs_access(const char *path, int mask)
 {
     LOG("access(path=\"%s\", mask=%d)\n", path, mask);
 
-    // TODO: Our filesystem is read-only, if they request W_OK access return -EROFS
+    // Our filesystem is read-only, if they request W_OK access return -EROFS
     if (mask & W_OK) { return -EROFS; }
 
-    // TODO: Find the ISO record (which can be either a file or directory)
+    // Find the ISO record (which can be either a file or directory)
     // In the case of an error, return -errno
-    const Record* record = NULL; // TODO: remove this NULL and this comment once you actually write the code
+    const ISO* iso = GET_ISO();
+    const Record* record = get_record(iso, path);
+    if (!record) { return -errno; }
 
     // Check the access bits (take note of the check_access() function here, you will need it later)
     if (mask == F_OK) { return 0; }
-    if (!check_access(GET_ISO(), record, path, mask)) { return -EACCES; }
+    if (!check_access(iso, record, path, mask)) { return -EACCES; }
     return 0;
 }
 
@@ -363,10 +398,14 @@ int isofs_opendir(const char *path, struct fuse_file_info *fi)
 {
     LOG("opendir(path=\"%s\", fi=%p)\n", path, fi);
 
-    // TODO: Get the directory record
+    const ISO* iso = GET_ISO();
+    // Get the directory record
+    const Record* record = get_record(iso, path);
     // In the case of an error, return -errno
-    // If it isn't a directory, return -ENOTDIR, if it doesn't have R_OK access, return -EACCES
-    const Record* record = NULL; // TODO: remove this NULL and this comment once you actually write the code
+    if (!record) { return -errno; }
+     // If it isn't a directory, return -ENOTDIR, if it doesn't have R_OK access, return -EACCES
+    if (!(record->file_flags & FILE_DIRECTORY)) { return -ENOTDIR; }
+    if (isofs_access(path, R_OK) < 0) { return -EACCES; }
 
     // Set the file-handle as our directory object
 	fi->fh = (uintptr_t)record;
@@ -405,12 +444,31 @@ int isofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t _of
     LOG("readdir(path=\"%s\", buf=%p, filler=%p, ..., fi=%p)\n", path, buf, filler, fi);
 
     const Record* directory = (const Record *)(uintptr_t)fi->fh;
+    const ISO* iso = GET_ISO();
 
-    // TODO: Loop over every Record in the directory
+    // Get the root directory record, if path is just "/" then return it
+    Record* curr_record = (Record*) &iso->raw[directory->extent_location];
+    uint32_t offset = 0;
+    while (true) {
+        // Get the record's filename and check for a match
+        char filename[256];
+        get_record_filename(iso, curr_record, filename);
+        if (filler(buf, filename, NULL, 0) != 0) {
+            return -ENOMEM;
+        }
 
-        // TODO: Get the file name from the record and send it to the filler
+        // Update offset; jump to next block if necessary
+        if (curr_record->length == 0) {
+            offset = (((directory->extent_location + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - directory->extent_location;
+        }
+        offset += curr_record->length;
 
-        // TODO: Advance to the next record (make sure to account for end-of-sector issues)
+        // Make sure we are not outside of the current directory
+        if (offset >= directory->extent_length) { break; }
+
+        // Advance to the next record (make sure to account for end-of-sector issues)
+        curr_record = (Record*) &iso->raw[offset + directory->extent_location];
+    }
 
  	return 0;
 }
@@ -450,18 +508,26 @@ int isofs_open(const char *path, struct fuse_file_info *fi)
 {
     LOG("open(path=\"%s\", fi=%p)\n", path, fi);
 
-    // TODO: If either write or read/write access is requested (available in fi->flags) then return -EACCESS
+    // If either write or read/write access is requested (available in fi->flags) then return -EACCESS
     if ((fi->flags & O_RDWR) || (fi->flags & O_WRONLY)) { return -EACCES; }
+    const ISO* iso = GET_ISO();
 
-    // TODO: Get the directory record
+    // Get the directory record
+    const Record* record = get_record(iso, path);
     // In the case of an error, return -errno
+    if (!record) { return -errno; }
     // If it is a directory, return -EISDIR, if it doesn't have R_OK access, return -EACCES
-    const Record* record = NULL; // TODO: remove this NULL and this comment once you actually write the code
+    if (record->file_flags & FILE_DIRECTORY) { return -EISDIR; }
+    if (isofs_access(path, R_OK) < 0) { return -EACCES; }
+    
 
-    // TODO: Allocate a new isofs_file object (if it cannot be allocated return -ENOMEM)
-    isofs_file *f = NULL; // TODO: remove this NULL and this comment once you actually write the code
+    // Allocate a new isofs_file object (if it cannot be allocated return -ENOMEM)
+    isofs_file *f = (isofs_file*) malloc(sizeof(isofs_file));
+    if (!f) {return -ENOMEM; }
 
-    // TODO: Fill in the fields of the structure so they can be used later
+    // Fill in the fields of the structure so they can be used later
+    f->data = &iso->raw[record->extent_length*iso->pvd->logical_block_size];
+    f->size = record->extent_length;
 
     // Set the file-handle as our file object
     fi->fh = (uintptr_t)f;
@@ -488,10 +554,11 @@ int isofs_read(const char *path, char *buf, size_t size, off_t offset, struct fu
     // Get our file "handle"
     isofs_file *f = (isofs_file*)(uintptr_t)fi->fh;
 
-    // TODO: copy the necessary data to the buffer and return the number of bytes copied
-    size_t n = 0; // TODO: remove this 0 and this comment once you actually write the code
+    // Copy the necessary data to the buffer and return the number of bytes copied
+    if (f->size - offset < size) { size = f->size - offset; }
+    memcpy(buf, f->data + offset, size);
 
-    return n;
+    return size;
 }
 
 /** Release an open file
@@ -512,7 +579,7 @@ int isofs_release(const char *path, struct fuse_file_info *fi)
     // Get our file "handle"
     isofs_file *f = (isofs_file*)(uintptr_t)fi->fh;
 
-    // TODO: Free the file "handle"
+    free(f);
 
     return 0;
 }
@@ -529,17 +596,17 @@ struct fuse_operations isofs_oper = {
     // Basic Information Operations
     .statfs = isofs_statfs,
     .getattr = isofs_getattr,
-    //.access = isofs_access,
+    .access = isofs_access,
 
     // Directories
-    //.opendir = isofs_opendir,
-    //.readdir = isofs_readdir,
-    //.releasedir = isofs_releasedir,
+    .opendir = isofs_opendir,
+    .readdir = isofs_readdir,
+    .releasedir = isofs_releasedir,
 
     // Files
-    //.open = isofs_open,
-    //.read = isofs_read,
-    //.release = isofs_release,
+    .open = isofs_open,
+    .read = isofs_read,
+    .release = isofs_release,
 
     // There are lots of other functions we aren't implementing since we are read-only...
     //    create, write, flush, fsync, ftruncate, truncate, chmod, utime, rename, mkdir, unlink, rmdir
