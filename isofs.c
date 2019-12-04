@@ -81,18 +81,18 @@ ISO* load_iso(const char* filename)
     bool terminated = false;
     while(offset < iso->size) {
         VolumeDescriptor* curr_descr = (VolumeDescriptor*) &iso->raw[offset]; // The current volume descriptor
-        if (curr_descr->type_code == VD_TERMINATOR) { terminated = true; break; }
         // Checks the version, id, type code, and if a primary volume descriptor has already been found
-        if (curr_descr->version != 1 )
+        if (curr_descr->version != 1 || memcmp(curr_descr->id, CD001, 5) != 0)
         {
             errno = EINVAL;
             close(iso->fd);
             munmap(iso->raw, iso->size);
             free(iso);
             return NULL;
-        } else if (memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
-            iso->pvd = (PrimaryVolumeDescriptor*) &iso->raw[offset];
+        } else if (curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
+            iso->pvd = (PrimaryVolumeDescriptor*)curr_descr;
         }
+        if (curr_descr->type_code == VD_TERMINATOR) { terminated = true; break; }
         offset += 0x800;
     }
     // TODO: Check the ISO for problems and cleanup everything if there is a problem
@@ -333,8 +333,8 @@ int isofs_getattr(const char *path, struct stat *statbuf)
         statbuf->st_gid = rr.gid;
     } else {
         if (record->file_flags & FILE_DIRECTORY) {
-            statbuf->st_mode |= S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
-        } else { statbuf->st_mode |= S_IRUSR | S_IRGRP | S_IROTH; }
+            statbuf->st_mode = S_IFDIR | S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
+        } else { statbuf->st_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH; }
         statbuf->st_nlink = 1;
         statbuf->st_uid = getuid();
         statbuf->st_gid = getgid();
@@ -596,17 +596,17 @@ struct fuse_operations isofs_oper = {
     // Basic Information Operations
     .statfs = isofs_statfs,
     .getattr = isofs_getattr,
-    .access = isofs_access,
+    //.access = isofs_access,
 
     // Directories
-    .opendir = isofs_opendir,
-    .readdir = isofs_readdir,
-    .releasedir = isofs_releasedir,
+    //.opendir = isofs_opendir,
+    //.readdir = isofs_readdir,
+    //.releasedir = isofs_releasedir,
 
     // Files
-    .open = isofs_open,
-    .read = isofs_read,
-    .release = isofs_release,
+    //.open = isofs_open,
+    //.read = isofs_read,
+    //.release = isofs_release,
 
     // There are lots of other functions we aren't implementing since we are read-only...
     //    create, write, flush, fsync, ftruncate, truncate, chmod, utime, rename, mkdir, unlink, rmdir
