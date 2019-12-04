@@ -63,7 +63,53 @@
  */
 ISO* load_iso(const char* filename)
 {
-    // TODO: copy from part 1
+    // Allocate the memory for our filesystem, make sure that pvd is set to NULL
+    ISO* iso = (ISO*) malloc(sizeof(ISO));
+    if (!iso) { return NULL; }
+    iso->pvd = NULL;
+
+    // Open the ISO file
+    // Setup the fd, size, and data fields in iso
+    if ((iso->fd = open(filename, O_RDONLY)) == -1) { free(iso); return NULL; }
+    struct stat stats;
+    if (fstat(iso->fd, &stats) == -1) { close(iso->fd); free(iso); return NULL; }
+    iso->size = stats.st_size;
+    if ((iso->raw = mmap(NULL, iso->size, PROT_READ, MAP_PRIVATE, iso->fd, 0)) == (void *) -1) { close(iso->fd); free(iso); return NULL; }
+
+    // Setup fields based on ISO data
+    int offset = 0x8000;
+    bool terminated = false;
+    while(offset < iso->size) {
+        VolumeDescriptor* curr_descr = (VolumeDescriptor*) &iso->raw[offset]; // The current volume descriptor
+        if (curr_descr->type_code == VD_TERMINATOR) { terminated = true; break; }
+        // Checks the version, id, type code, and if a primary volume descriptor has already been found
+        if (curr_descr->version != 1 )
+        {
+            errno = EINVAL;
+            close(iso->fd);
+            munmap(iso->raw, iso->size);
+            free(iso);
+            return NULL;
+        } else if (memcmp(curr_descr->id, CD001, 5) == 0 && curr_descr->type_code == VD_PRIMARY && !iso->pvd) {
+            iso->pvd = (PrimaryVolumeDescriptor*) &iso->raw[offset];
+        }
+        offset += 0x800;
+    }
+    // TODO: Check the ISO for problems and cleanup everything if there is a problem
+    // TODO: Also find the Primary Volume Descriptor and set the pvd fields in the iso variable
+
+    // Check if a Primary Volume Descriptor was not found or we got to the end of the file
+    // before the Terminator was found
+    if (!iso->pvd || !terminated) {
+        errno = EINVAL;
+        close(iso->fd);
+        munmap(iso->raw, iso->size);
+        free(iso);
+        return NULL;
+    }
+
+    // Return the setup iso variable
+    return iso;
 }
 
 /**
@@ -72,7 +118,9 @@ ISO* load_iso(const char* filename)
  */
 void free_iso(ISO* iso)
 {
-    // TODO: copy from part 1
+    close(iso->fd);
+    if (iso->raw) { munmap(iso->raw, iso->size); }
+    free(iso);
 }
 
 /**
@@ -89,7 +137,69 @@ void free_iso(ISO* iso)
  */
 const Record* get_record(const ISO* iso, const char* path)
 {
-    // TODO: copy from part 2
+    // Get the root directory record, if path is just "/" then return it
+    Record* curr_record;
+    Record* curr_dir = &iso->pvd->root_record; // The current directory; beginning from the root
+    if (!strcmp(path, "/")) { return curr_dir; }
+    
+    // Get the path name parts from the given path
+    path_names* path_parts = get_path_names(path);
+    if (!path_parts) { return NULL; }
+    // Go through each name in the set of path names
+    for (int i = 0; i < path_parts->count; i++) {
+        // Check that the end of the extent is within the ISO file raw data
+        uint32_t start_pos = curr_dir->extent_location*iso->pvd->logical_block_size; // Start of directory
+        if (start_pos + curr_dir->extent_length > iso->size) {
+            errno = EINVAL;
+            free_path_names(path_parts);
+            return NULL;
+        }
+
+        // Go through each record in the directory, comparing the filename of the record
+        // with the path name part
+        curr_record = (Record*) &iso->raw[start_pos];
+        uint32_t offset = 0;
+        bool found_path_part = false;
+        while (true) {
+            // Get the record's filename and check for a match
+            char filename[256];
+            get_record_filename(iso, curr_record, filename);
+            if ((found_path_part = !strcmp(filename, path_parts->names[i]))) { break; }
+
+
+            // Update offset; jump to next block if necessary
+            if (curr_record->length == 0) {
+                offset = (((start_pos + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - start_pos;
+            }
+            offset += curr_record->length;
+
+            // Make sure we are not outside of the current directory
+            if (offset >= curr_dir->extent_length) { break; }
+
+            // Advance to the next record (make sure to account for end-of-sector issues)
+            curr_record = (Record*) &iso->raw[offset + start_pos];
+        }
+
+        // Check if we failed to find a match - file/directory does not exist
+        if (!found_path_part) {
+            errno = ENOENT;
+            free_path_names(path_parts);
+            return NULL;
+        }
+
+        // Check if a regular file matched something supposed to be a directory
+        if ((i != path_parts->count - 1 || path_parts->trailing_slash) && !(curr_record->file_flags & FILE_DIRECTORY)) {
+            errno = ENOTDIR;
+            free_path_names(path_parts);
+            return NULL;
+        }
+        
+        curr_dir = curr_record;
+    }
+
+    // Cleanup and return the found record
+    free_path_names(path_parts);
+    return curr_record;
 }
 
 /**
