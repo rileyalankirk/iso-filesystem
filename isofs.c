@@ -447,9 +447,9 @@ int isofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t _of
     const ISO* iso = GET_ISO();
 
     // Get the root directory record, if path is just "/" then return it
-    Record* curr_record = (Record*) &iso->raw[directory->extent_location];
+    Record* curr_record = (Record*) &iso->raw[directory->extent_location*iso->pvd->logical_block_size];
     uint32_t offset = 0;
-    while (offset >= directory->extent_length) {
+    while (offset < directory->extent_length) {
         // Get the record's filename and check for a match
         char filename[256];
         get_record_filename(iso, curr_record, filename);
@@ -459,12 +459,12 @@ int isofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t _of
 
         // Update offset; jump to next block if necessary
         if (curr_record->length == 0) {
-            offset = (((directory->extent_location + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - directory->extent_location;
+            offset = (((directory->extent_location + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - directory->extent_location*iso->pvd->logical_block_size;
         }
         offset += curr_record->length;
 
         // Advance to the next record (make sure to account for end-of-sector issues)
-        curr_record = (Record*) &iso->raw[offset + directory->extent_location];
+        curr_record = (Record*) &iso->raw[offset + directory->extent_location*iso->pvd->logical_block_size];
     }
 
  	return 0;
