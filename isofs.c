@@ -160,24 +160,20 @@ const Record* get_record(const ISO* iso, const char* path)
         curr_record = (Record*) &iso->raw[start_pos];
         uint32_t offset = 0;
         bool found_path_part = false;
-        while (true) {
+        while (offset < curr_dir->extent_length) {
             // Get the record's filename and check for a match
             char filename[256];
             get_record_filename(iso, curr_record, filename);
             if ((found_path_part = !strcmp(filename, path_parts->names[i]))) { break; }
 
-
-            // Update offset; jump to next block if necessary
-            if (curr_record->length == 0) {
-                offset = (((start_pos + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - start_pos;
-            }
-            offset += curr_record->length;
-
-            // Make sure we are not outside of the current directory
-            if (offset >= curr_dir->extent_length) { break; }
-
             // Advance to the next record (make sure to account for end-of-sector issues)
+            // Update offset; jump to next block if necessary
+            offset += curr_record->length;
             curr_record = (Record*) &iso->raw[offset + start_pos];
+            if (curr_record->length == 0) {
+                offset = ((offset/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size;
+                curr_record = (Record*) &iso->raw[offset + start_pos];
+            }
         }
 
         // Check if we failed to find a match - file/directory does not exist
