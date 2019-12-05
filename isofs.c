@@ -405,7 +405,7 @@ int isofs_opendir(const char *path, struct fuse_file_info *fi)
     if (!record) { return -errno; }
      // If it isn't a directory, return -ENOTDIR, if it doesn't have R_OK access, return -EACCES
     if (!(record->file_flags & FILE_DIRECTORY)) { return -ENOTDIR; }
-    if (isofs_access(path, R_OK) < 0) { return -EACCES; }
+    if (!check_access(iso, record, path, R_OK)) { return -EACCES; }
 
     // Set the file-handle as our directory object
 	fi->fh = (uintptr_t)record;
@@ -449,7 +449,7 @@ int isofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t _of
     // Get the root directory record, if path is just "/" then return it
     Record* curr_record = (Record*) &iso->raw[directory->extent_location];
     uint32_t offset = 0;
-    while (true) {
+    while (offset >= directory->extent_length) {
         // Get the record's filename and check for a match
         char filename[256];
         get_record_filename(iso, curr_record, filename);
@@ -462,9 +462,6 @@ int isofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t _of
             offset = (((directory->extent_location + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - directory->extent_location;
         }
         offset += curr_record->length;
-
-        // Make sure we are not outside of the current directory
-        if (offset >= directory->extent_length) { break; }
 
         // Advance to the next record (make sure to account for end-of-sector issues)
         curr_record = (Record*) &iso->raw[offset + directory->extent_location];
@@ -518,8 +515,7 @@ int isofs_open(const char *path, struct fuse_file_info *fi)
     if (!record) { return -errno; }
     // If it is a directory, return -EISDIR, if it doesn't have R_OK access, return -EACCES
     if (record->file_flags & FILE_DIRECTORY) { return -EISDIR; }
-    if (isofs_access(path, R_OK) < 0) { return -EACCES; }
-    
+    if (!check_access(iso, record, path, R_OK)) { return -EACCES; }
 
     // Allocate a new isofs_file object (if it cannot be allocated return -ENOMEM)
     isofs_file *f = (isofs_file*) malloc(sizeof(isofs_file));
