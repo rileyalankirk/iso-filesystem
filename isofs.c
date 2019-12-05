@@ -522,7 +522,7 @@ int isofs_open(const char *path, struct fuse_file_info *fi)
     if (!f) {return -ENOMEM; }
 
     // Fill in the fields of the structure so they can be used later
-    f->data = &iso->raw[record->extent_length*iso->pvd->logical_block_size];
+    f->data = &iso->raw[record->extent_location*iso->pvd->logical_block_size];
     f->size = record->extent_length;
 
     // Set the file-handle as our file object
