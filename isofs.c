@@ -457,14 +457,16 @@ int isofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t _of
             return -ENOMEM;
         }
 
-        // Update offset; jump to next block if necessary
-        if (curr_record->length == 0) {
-            offset = (((directory->extent_location + offset)/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size - directory->extent_location*iso->pvd->logical_block_size;
-        }
-        offset += curr_record->length;
+        
 
         // Advance to the next record (make sure to account for end-of-sector issues)
+        offset += curr_record->length;
         curr_record = (Record*) &iso->raw[offset + directory->extent_location*iso->pvd->logical_block_size];
+        // Update offset; jump to next block if necessary
+        if (curr_record->length == 0) {
+            offset = ((offset/iso->pvd->logical_block_size) + 1)*iso->pvd->logical_block_size;
+            curr_record = (Record*) &iso->raw[offset + directory->extent_location*iso->pvd->logical_block_size];
+        }
     }
 
  	return 0;
