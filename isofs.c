@@ -344,9 +344,9 @@ int isofs_getattr(const char *path, struct stat *statbuf)
     if (rr.flags & RR_HAS_MODIFICATION) { statbuf->st_mtime = rr.modification; }
     else { statbuf->st_mtime = convert_datetime(&record->datetime); }
     if (rr.flags & RR_HAS_ACCESS) { statbuf->st_atime = rr.access; }
-    else { statbuf->st_mtime = convert_datetime(&record->datetime); }
+    else { statbuf->st_atime = convert_datetime(&record->datetime); }
     if (rr.flags & RR_HAS_CREATION) { statbuf->st_ctime = rr.creation; }
-    else { statbuf->st_mtime = convert_datetime(&record->datetime); }
+    else { statbuf->st_ctime = convert_datetime(&record->datetime); }
  
     statbuf->st_size = record->extent_length;
     statbuf->st_blocks = (statbuf->st_size + 511) / 512;
